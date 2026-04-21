@@ -20,10 +20,10 @@
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/pid.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
@@ -48,16 +48,11 @@ struct monitored_entry {
 /* ---------------------------------------------------------------
  * TODO 2: Global list and lock
  *
- * We use a mutex rather than a spinlock because:
- *   - The timer callback runs in a non-atomic (process) context via
- *     mod_timer, so sleeping is allowed.
- *   - kmalloc with GFP_KERNEL (called from ioctl) requires a sleepable
- *     context — a spinlock would force GFP_ATOMIC on every allocation.
- *   - The critical sections are short (a few list iterations), so
- *     mutex overhead is acceptable.
+ * Use a spinlock for list synchronization because timer callbacks run in
+ * softirq context where sleeping locks (mutex) are not allowed.
  * --------------------------------------------------------------- */
 static LIST_HEAD(monitored_list);
-static DEFINE_MUTEX(monitored_lock);
+static DEFINE_SPINLOCK(monitored_lock);
 
 /* --- Provided: internal device / timer state --- */
 static struct timer_list monitor_timer;
@@ -135,8 +130,9 @@ static void kill_process(const char *container_id,
 static void timer_callback(struct timer_list *t)
 {
     struct monitored_entry *entry, *tmp;
+    unsigned long flags;
 
-    mutex_lock(&monitored_lock);
+    spin_lock_irqsave(&monitored_lock, flags);
 
     list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
         long rss = get_rss_bytes(entry->pid);
@@ -170,7 +166,7 @@ static void timer_callback(struct timer_list *t)
         }
     }
 
-    mutex_unlock(&monitored_lock);
+    spin_unlock_irqrestore(&monitored_lock, flags);
 
     /* Re-arm the timer */
     mod_timer(&monitor_timer, jiffies + CHECK_INTERVAL_SEC * HZ);
@@ -196,6 +192,8 @@ static long monitor_ioctl(struct file *f, unsigned int cmd,
     /* ---- TODO 4: REGISTER ---- */
     if (cmd == MONITOR_REGISTER) {
         struct monitored_entry *entry;
+        struct monitored_entry *it;
+        unsigned long flags;
 
         printk(KERN_INFO
                "[container_monitor] Registering container=%s pid=%d "
@@ -222,9 +220,21 @@ static long monitor_ioctl(struct file *f, unsigned int cmd,
         entry->container_id[MONITOR_NAME_LEN - 1] = '\0';
         INIT_LIST_HEAD(&entry->list);
 
-        mutex_lock(&monitored_lock);
+        spin_lock_irqsave(&monitored_lock, flags);
+        list_for_each_entry(it, &monitored_list, list) {
+            if (it->pid == req.pid &&
+                strncmp(it->container_id, req.container_id,
+                        MONITOR_NAME_LEN) == 0) {
+                it->soft_limit_bytes = req.soft_limit_bytes;
+                it->hard_limit_bytes = req.hard_limit_bytes;
+                it->soft_warned = 0;
+                spin_unlock_irqrestore(&monitored_lock, flags);
+                kfree(entry);
+                return 0;
+            }
+        }
         list_add_tail(&entry->list, &monitored_list);
-        mutex_unlock(&monitored_lock);
+        spin_unlock_irqrestore(&monitored_lock, flags);
 
         return 0;
     }
@@ -237,8 +247,9 @@ static long monitor_ioctl(struct file *f, unsigned int cmd,
     {
         struct monitored_entry *entry, *tmp;
         int found = 0;
+        unsigned long flags;
 
-        mutex_lock(&monitored_lock);
+        spin_lock_irqsave(&monitored_lock, flags);
         list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
             if (entry->pid == req.pid &&
                 strncmp(entry->container_id, req.container_id,
@@ -249,7 +260,7 @@ static long monitor_ioctl(struct file *f, unsigned int cmd,
                 break;
             }
         }
-        mutex_unlock(&monitored_lock);
+        spin_unlock_irqrestore(&monitored_lock, flags);
 
         if (!found) {
             printk(KERN_WARNING
@@ -319,12 +330,13 @@ static void __exit monitor_exit(void)
     /* TODO 6: Free all remaining monitored entries */
     {
         struct monitored_entry *entry, *tmp;
-        mutex_lock(&monitored_lock);
+        unsigned long flags;
+        spin_lock_irqsave(&monitored_lock, flags);
         list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
             list_del(&entry->list);
             kfree(entry);
         }
-        mutex_unlock(&monitored_lock);
+        spin_unlock_irqrestore(&monitored_lock, flags);
     }
 
     cdev_del(&c_dev);
