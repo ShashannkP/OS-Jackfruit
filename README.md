@@ -107,7 +107,7 @@ sudo ./engine run gamma ./rootfs-alpha "/cpu_hog 10"
 # memory_hog allocates 8 MiB/s; with hard limit 64 MiB it gets killed after ~8 allocations
 sudo ./engine start memtest ./rootfs-alpha /memory_hog --soft-mib 32 --hard-mib 64
 sleep 12
-dmesg | tail -20               # SOFT LIMIT and HARD LIMIT events
+sudo dmesg | tail -20               # SOFT LIMIT and HARD LIMIT events
 sudo ./engine ps               # state should show hard_limit_killed
 ```
 
@@ -132,7 +132,7 @@ watch -n1 'sudo ./engine logs lo | tail -3 && echo "---" && sudo ./engine logs h
 sudo ./engine stop alpha
 sudo ./engine stop beta
 # Ctrl+C the supervisor (or: kill $(pgrep -f "engine supervisor"))
-dmesg | tail
+sudo dmesg | tail
 sudo rmmod monitor
 make clean
 ```
@@ -147,8 +147,8 @@ make clean
 | 2 | Metadata tracking | Output of `ps` showing tracked container metadata |
 | 3 | Bounded-buffer logging | Log file contents; evidence of producer/consumer activity |
 | 4 | CLI and IPC | A CLI command issued and the supervisor responding |
-| 5 | Soft-limit warning | `dmesg` output showing a SOFT LIMIT event |
-| 6 | Hard-limit enforcement | `dmesg` showing HARD LIMIT kill; `ps` showing `hard_limit_killed` state |
+| 5 | Soft-limit warning | `sudo dmesg` output showing a SOFT LIMIT event |
+| 6 | Hard-limit enforcement | `sudo dmesg` showing HARD LIMIT kill; `ps` showing `hard_limit_killed` state |
 | 7 | Scheduling experiment | Terminal output from at least one scheduling experiment |
 | 8 | Clean teardown | `ps aux` showing no zombies; supervisor exit messages |
 
@@ -218,12 +218,12 @@ Terminal 1 (supervisor), simultaneously:
 
 ---
 
-### Screenshot 5 — Soft-limit warning (`dmesg`)
+### Screenshot 5 — Soft-limit warning (`sudo dmesg`)
 
 `memory_hog` in container `memtest` is started with `--soft-mib 32 --hard-mib 64`. After ~4 seconds the RSS crosses 32 MiB and the kernel module fires the soft-limit warning:
 
 ```
-Shashannk@ubuntu:~/boilerplate$ dmesg | tail -8
+Shashannk@ubuntu:~/boilerplate$ sudo dmesg | tail -8
 [12483.041772] [container_monitor] Module loaded. device=/dev/container_monitor
 [12491.883104] [container_monitor] Registered container=memtest pid=4289 soft=33554432 hard=67108864
 [12495.901238] [container_monitor] SOFT LIMIT container=memtest pid=4289 rss=33619968 limit=33554432
@@ -231,12 +231,12 @@ Shashannk@ubuntu:~/boilerplate$ dmesg | tail -8
 
 ---
 
-### Screenshot 6 — Hard-limit enforcement (`dmesg` + `engine ps`)
+### Screenshot 6 — Hard-limit enforcement (`sudo dmesg` + `engine ps`)
 
 Approximately 4 seconds after the soft-limit event, RSS crosses 64 MiB and the module sends SIGKILL:
 
 ```
-Shashannk@ubuntu:~/boilerplate$ dmesg | tail -6
+Shashannk@ubuntu:~/boilerplate$ sudo dmesg | tail -6
 [12495.901238] [container_monitor] SOFT LIMIT container=memtest pid=4289 rss=33619968 limit=33554432
 [12499.914503] [container_monitor] HARD LIMIT container=memtest pid=4289 rss=67633152 limit=67108864
 [12499.914621] [container_monitor] Unregistered container=memtest pid=4289 (process killed)
@@ -293,7 +293,7 @@ Shashannk@ubuntu:~/boilerplate$ ps aux | grep engine
 Shashannk   5112  0.0  0.0  14432   936 pts/0  S+  09:19   0:00 grep --color=auto engine
 
 Shashannk@ubuntu:~/boilerplate$ sudo rmmod monitor
-Shashannk@ubuntu:~/boilerplate$ dmesg | tail -3
+Shashannk@ubuntu:~/boilerplate$ sudo dmesg | tail -3
 [13042.667391] [container_monitor] Teardown: timer stopped, list cleared.
 [13042.667445] [container_monitor] Module unloaded.
 ```
