@@ -69,8 +69,8 @@ Do not commit `rootfs-base/` or `rootfs-*` to the repository.
 
 ```bash
 sudo insmod monitor.ko
-ls -l /dev/container_monitor   # device should appear
-dmesg | tail                   # should show: [container_monitor] Module loaded
+ls -l /dev/container_monitor           # device should appear
+sudo dmesg | tail                      
 ```
 
 ### Start the Supervisor (Terminal 1)
